@@ -4,16 +4,20 @@ import android.app.Activity;
 import android.content.ActivityNotFoundException;
 import android.content.ComponentName;
 import android.content.Intent;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.net.Uri;
+import android.os.Handler;
+import android.os.Message;
 import android.util.Log;
 
-import org.apache.cordova.BuildHelper;
+import org.apache.cordova.BuildConfig;
 import org.apache.cordova.CallbackContext;
 import org.apache.cordova.CordovaInterface;
 import org.apache.cordova.CordovaPlugin;
 import org.apache.cordova.CordovaWebView;
+import org.apache.cordova.PluginResult;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -24,13 +28,6 @@ import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 
 /**
  * Start a native Activity. This plugin
@@ -44,555 +41,444 @@ import java.util.concurrent.TimeoutException;
  */
 public class NativeView extends CordovaPlugin {
 
-    protected HashMap<String, String> marketUrls = new HashMap<String, String>() {{
-        put("app", "market://details?id=%s");
-        put("web", "https://play.google.com/store/apps/details?id=%s");
-    }};
-    protected static CordovaPlugin instance = null;
-    protected Activity activity;
-    private static final String SERVICE_NAME = NativeView.class.getName();
-    private static final String TAG = NativeView.class.getName() + "Plugin";
+  private static final String TAG = "NativeViewPlugin";
+  protected HashMap<String, String> marketUrls = new HashMap<String, String>() {{
+    put("app", "market://details?id=%s");
+    put("web", "https://play.google.com/store/apps/details?id=%s");
+  }};
 
-    public static synchronized NativeView getInstance(Activity activity) {
+  public void initialize(CordovaInterface cordova, CordovaWebView webView) {
+    super.initialize(cordova, webView);
 
-        if (instance == null) {
-            instance = new NativeView(activity);
-            instance = getPlugin(instance);
-        }
+    Log.d(TAG, "Initializing " + TAG);
+  }
 
-        return (NativeView) instance;
+  public boolean execute(String action, JSONArray args, final CallbackContext callbackContext) {
+
+    try {
+
+      Method method = getClass().getMethod(action, JSONArray.class, CallbackContext.class);
+
+      try {
+
+        method.invoke(this, args, callbackContext);
+
+        return true;
+
+      } catch (IllegalAccessException e) {
+        JSONObject error = errorResult(e);
+        callbackContext.error(error);
+
+        e.printStackTrace();
+
+      } catch (IllegalArgumentException e) {
+        JSONObject error = errorResult(e);
+        callbackContext.error(error);
+
+        e.printStackTrace();
+
+      }catch (InvocationTargetException e) {
+        JSONObject error = errorResult(e);
+        callbackContext.error(error);
+
+        e.printStackTrace();
+      }
+    }catch (NoSuchMethodException e) {
+
+      String message = String.format("Method with name: %s was not found on: %s\n Reason: %s", action, getClass().getName(), e.getMessage());
+
+      Log.d(TAG, message);
+
+      HashMap<String, Object> data = new HashMap<String, Object>();
+      data.put("message", message);
+
+      JSONObject error = errorResult(e, data);
+      callbackContext.error(error);
+
+      e.printStackTrace();
+
     }
 
-    private NativeView(Activity activity) {
+    return false;
+  }
 
-        if (activity != null) {
-            this.activity = activity;
-        }
-    }
+  public void show(JSONArray args, final CallbackContext callbackContext) throws JSONException {
 
-    public void initialize(CordovaInterface cordova, CordovaWebView webView) {
-        super.initialize(cordova, webView);
+    JSONObject activityParams = mountParams(args);
 
-        if (cordova != null) {
-            activity = cordova.getActivity();
-        }
 
-        Log.d(TAG, "Initializing Cordova Plugin " + TAG);
-    }
+    final Intent intentToStart = configureIntent(args, activityParams, callbackContext);
 
-    public boolean execute(String action, JSONArray args, final CallbackContext callbackContext) {
+    cordova.getThreadPool().execute(new Runnable() {
+      @Override
+      public void run() {
 
         try {
+          /**
+           * Reference: You can use "PendingIntent" to avoid open the Activity twice,
+           * but the ActivityNotFound exception is never catch
+           *
+           * @see https://www.journaldev.com/10463/android-notification-pendingintent
+           */
+          cordova.getActivity().startActivity(intentToStart);
+          JSONObject success = new JSONObject();
+          success.put("success", true);
+          success.put("message", "Native screen is started");
 
-            Method method = getClass().getMethod(action, JSONArray.class, CallbackContext.class);
+          callbackContext.success(success);
+        } catch (Exception e) {
 
-            try {
-
-                method.invoke(this, args, callbackContext);
-
-                return true;
-
-            } catch (IllegalAccessException | IllegalArgumentException | InvocationTargetException e) {
-                JSONObject error = errorResult(e);
-                callbackContext.error(error);
-
-                e.printStackTrace();
-
-            }
-        }catch (NoSuchMethodException e) {
-
-            String message = String.format("Method with name: %s was not found on: %s\n Reason: %s", action, getClass().getName(), e.getMessage());
-
-            Log.d(TAG, message);
-
-            HashMap<String, Object> data = new HashMap<String, Object>();
-            data.put("message", message);
-
-            JSONObject error = errorResult(e, data);
-            callbackContext.error(error);
-
-            e.printStackTrace();
-
+          JSONObject error = errorResult(e);
+          callbackContext.error(error);
+          e.printStackTrace();
         }
 
-        return false;
+      }
+    });
+  }
+
+  public void showMarket(JSONArray args, final CallbackContext callbackContext) throws JSONException {
+
+    JSONObject activityParams = mountParams(args);
+    String targetPackage;
+
+    if (activityParams.has("marketId")) {
+      targetPackage = activityParams.getString("marketId");
+    }else{
+
+      targetPackage = activityParams.has("package") ? activityParams.optString("package") : activityParams.optString("packageApp");
     }
 
-    public void show(JSONArray args, final CallbackContext callbackContext) throws JSONException {
-
-        JSONObject activityParams = mountParams(args);
-
-
-        final Intent intentToStart = configureIntent(args, activityParams, callbackContext);
-
-        cordova.getThreadPool().execute(new Runnable() {
-            @Override
-            public void run() {
-
-                try {
-                    /**
-                     * Reference: You can use "PendingIntent" to avoid open the Activity twice,
-                     * but the ActivityNotFound exception is never catch
-                     *
-                     * @see https://www.journaldev.com/10463/android-notification-pendingintent
-                     */
-                    activity.startActivity(intentToStart);
-                    JSONObject success = new JSONObject();
-                    success.put("success", true);
-                    success.put("message", "Native screen is started");
-
-                    callbackContext.success(success);
-                } catch (Exception e) {
-
-                    JSONObject error = errorResult(e);
-                    callbackContext.error(error);
-                    e.printStackTrace();
-                }
-
-            }
-        });
+    if (targetPackage == null || (targetPackage != null && targetPackage.length() == 0)) {
+      JSONObject error = new JSONObject() {{
+        put("success", false);
+        put("message", "The 'marketId' or 'package' is required");
+      }};
+      callbackContext.error(error);
+      return;
     }
 
-    /**
-     * TODO: Avoid "ActivityNotFoundException" from Java to Kotlin Activity
-     * @see <a href="https://winterbe.com/posts/2015/04/07/java8-concurrency-tutorial-thread-executor-examples/#callables-and-futures">Java 8 Concurrency Tutorial: Threads and Executors</a>
-     * @param params
-     * @throws {@link ExecutionException}, {@link InterruptedException}
-     */
-    public JSONObject show(JSONObject params) throws ExecutionException, InterruptedException, TimeoutException {
+    final Intent intent = new Intent(Intent.ACTION_VIEW);
+    final String packageName = targetPackage;
 
-//        try {
-//            Class<?> c = Class.forName("br.com.mfdeveloper.cordova.view.OtherActivity");
-//            String name = c.getSuperclass().getName();
-//        } catch (ClassNotFoundException e) {
-//            e.printStackTrace();
-//        }
-
-        final Intent intentToStart;
+    cordova.getThreadPool().execute(new Runnable() {
+      @Override
+      public void run() {
         try {
-            //TODO: Refactor this to use without "CallbackContext" cordova class and empty JSONArray parameter
-            intentToStart = configureIntent(new JSONArray(), params, null);
-        } catch (JSONException e) {
-            return errorResult(e);
-        }
+          intent.setData(Uri.parse(String.format(marketUrls.get("app"), packageName)));
+          cordova.getActivity().startActivity(intent);
 
-        Callable<JSONObject> task = new Callable<JSONObject>() {
-            @Override
-            public JSONObject call() {
+          JSONObject result = new JSONObject() {{
+            put("success", true);
+            put("uri", intent.getData().toString());
+            put("package", packageName);
+          }};
 
-                try {
-                    /**
-                     * Reference: You can use "PendingIntent" to avoid open the Activity twice,
-                     * but the ActivityNotFound exception is never catch
-                     *
-                     * @see <a href="https://www.journaldev.com/10463/android-notification-pendingintent">Android Notification, PendingIntent Example
-                     * 13 Comments</a>
-                     */
-                    activity.startActivity(intentToStart);
-                    JSONObject success = new JSONObject();
-                    success.put("success", true);
-                    success.put("message", "Native screen is started");
+          callbackContext.success(result);
 
-                    return success;
-                } catch (JSONException e) {
+        } catch (ActivityNotFoundException activityErr) {
 
-                    JSONObject error = errorResult(e);
-                    e.printStackTrace();
-
-                    return error;
-                }
-            }
-        };
-
-        ExecutorService executor = Executors.newCachedThreadPool();
-        Future<JSONObject> future = executor.submit(task);
-
-        JSONObject result = future.get(2, TimeUnit.SECONDS);
-        if (future.isDone()) {
-            return result;
-        }
-
-        return null;
-    }
-
-    public void showMarket(JSONArray args, final CallbackContext callbackContext) throws JSONException {
-
-        JSONObject activityParams = mountParams(args);
-        String targetPackage;
-
-        if (activityParams.has("marketId")) {
-            targetPackage = activityParams.getString("marketId");
-        }else{
-
-            targetPackage = activityParams.has("package") ? activityParams.optString("package") : activityParams.optString("packageApp");
-        }
-
-        if (targetPackage.isEmpty()) {
-            JSONObject error = new JSONObject() {{
-                put("success", false);
-                put("message", "The 'marketId' or 'package' is required");
-            }};
-            callbackContext.error(error);
-            return;
-        }
-
-        final Intent intent = new Intent(Intent.ACTION_VIEW);
-        final String packageName = targetPackage;
-
-        cordova.getThreadPool().execute(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    intent.setData(Uri.parse(String.format(marketUrls.get("app"), packageName)));
-                    activity.startActivity(intent);
-
-                    JSONObject result = new JSONObject() {{
-                        put("success", true);
-                        put("uri", intent.getData().toString());
-                        put("package", packageName);
-                    }};
-
-                    callbackContext.success(result);
-
-                } catch (ActivityNotFoundException activityErr) {
-
-                    try {
-                        intent.setData(Uri.parse(String.format(marketUrls.get("web"), packageName)));
-                        activity.startActivity(intent);
-
-                        JSONObject result = new JSONObject() {{
-                            put("success", true);
-                            put("uri", intent.getData().toString());
-                            put("package", packageName);
-                        }};
-
-                        callbackContext.success(result);
-
-                    }catch (Exception err) {
-                        JSONObject error = errorResult(err);
-                        callbackContext.error(error);
-                        err.printStackTrace();
-                    }
-                }catch (Exception e) {
-
-                    JSONObject error = errorResult(e);
-                    callbackContext.error(error);
-                    e.printStackTrace();
-                }
-            }
-        });
-    }
-
-    public void checkIfAppInstalled(JSONArray args, final CallbackContext callbackContext) throws JSONException {
-
-        final JSONObject activityParams = mountParams(args);
-        final Intent intent = configureIntent(args, activityParams, callbackContext);
-
-        PackageManager packManager = activity.getApplicationContext().getPackageManager();
-
-        // Get all activities that respond to the configured Intent (by uri, package etc..)
-        final List<ResolveInfo> listInfo = packManager.queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY);
-
-        if (listInfo.size() > 0) {
+          try {
+            intent.setData(Uri.parse(String.format(marketUrls.get("web"), packageName)));
+            cordova.getActivity().startActivity(intent);
 
             JSONObject result = new JSONObject() {{
-                put("success", true);
-                put("packageName", listInfo.get(0).activityInfo.packageName);
-                put("applicationInfo", listInfo.get(0).activityInfo.toString());
-                put("activityName", listInfo.get(0).activityInfo.name);
+              put("success", true);
+              put("uri", intent.getData().toString());
+              put("package", packageName);
             }};
 
             callbackContext.success(result);
 
-        } else {
-            JSONObject error = new JSONObject() {{
-                put("success", false);
-                put("message", "App not found");
-                put("intent", intent.toString());
-                put("action", intent.getAction());
-                put("params", activityParams);
-            }};
+          }catch (Exception err) {
+            JSONObject error = errorResult(err);
             callbackContext.error(error);
+            err.printStackTrace();
+          }
+        }catch (Exception e) {
+
+          JSONObject error = errorResult(e);
+          callbackContext.error(error);
+          e.printStackTrace();
         }
+      }
+    });
+  }
+
+  public void checkIfAppInstalled(JSONArray args, final CallbackContext callbackContext) throws JSONException {
+
+    final JSONObject activityParams = mountParams(args);
+    final Intent intent = configureIntent(args, activityParams, callbackContext);
+
+    PackageManager packManager = this.cordova.getActivity().getApplicationContext().getPackageManager();
+
+    // Get all activities that respond to the configured Intent (by uri, package etc..)
+    final List<ResolveInfo> listInfo = packManager.queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY);
+
+    if (listInfo.size() > 0) {
+
+      JSONObject result = new JSONObject() {{
+        put("success", true);
+        put("packageName", listInfo.get(0).activityInfo.packageName);
+        put("applicationInfo", listInfo.get(0).activityInfo.toString());
+        put("activityName", listInfo.get(0).activityInfo.name);
+      }};
+
+      callbackContext.success(result);
+
+    } else {
+      JSONObject error = new JSONObject() {{
+        put("success", false);
+        put("message", "App not found");
+        put("intent", intent.toString());
+        put("action", intent.getAction());
+        put("params", activityParams);
+      }};
+      callbackContext.error(error);
+    }
+  }
+
+//  public void getBuildVariant(JSONArray args, final CallbackContext callbackContext) {
+//
+//    if (args.length() > 0) {
+//
+//      try{
+//
+//        JSONObject params = args.getJSONObject(0);
+//
+//        if (params.has("catchError") && params.optBoolean("catchError", true)) {
+//
+//          if (BuildConfig.FLAVOR == null || BuildConfig.FLAVOR.length() == 0) {
+//
+//            JSONObject error = new JSONObject();
+//            error.put("success", false);
+//            error.put("message", "The FLAVOR is not defined. Verify your build.gradle 'productFlavors' config");
+//
+//            callbackContext.error(error);
+//            return;
+//          }
+//        }
+//
+//      }catch (JSONException e) {
+//        JSONObject error = errorResult(e);
+//
+//        callbackContext.error(error);
+//      }
+//    }
+
+
+//    callbackContext.success(BuildConfig.FLAVOR);
+//  }
+
+  protected JSONObject mountParams(JSONArray args) throws JSONException {
+
+    JSONObject activityParams;
+
+    if (args.opt(0) instanceof JSONObject) {
+      activityParams = new JSONObject(args.getJSONObject(0).toString());
+    }else {
+      activityParams = new JSONObject();
+      activityParams.put("packageName", args.optString(0));
+      activityParams.put("className", args.optString(1));
     }
 
-    public void getBuildVariant(JSONArray args, final CallbackContext callbackContext) {
+    return activityParams;
+  }
 
-        String flavor = (String) BuildHelper.getBuildConfigValue(activity, "FLAVOR");
+  protected Intent configureIntent(JSONArray args, JSONObject activityParams, CallbackContext callbackContext) throws JSONException {
+    Intent intent = new Intent();
+    intent = intentFromUri(intent, activityParams, callbackContext);
 
-        if (args.length() > 0) {
+    if (!(intent.getData() instanceof Uri)) {
 
-            try{
+      String targetPackage = activityParams.has("package") ? activityParams.optString("package") : activityParams.optString("packageApp");
 
-                JSONObject params = args.getJSONObject(0);
+      if (targetPackage != null && targetPackage.length() > 0) {
 
-                if (params.has("catchError") && params.optBoolean("catchError", true)) {
+        intent.setPackage(targetPackage);
+      }
 
-                    if (flavor == null || flavor.isEmpty()) {
+      intent = intentFromClass(intent, activityParams, callbackContext);
 
-                        JSONObject error = new JSONObject();
-                        error.put("success", false);
-                        error.put("message", "The FLAVOR is not defined. Verify your build.gradle 'productFlavors' config");
-
-                        callbackContext.error(error);
-                        return;
-                    }
-                }
-
-            }catch (JSONException e) {
-                JSONObject error = errorResult(e);
-
-                callbackContext.error(error);
-            }
-        }
-
-
-        callbackContext.success(flavor);
+      intent = intentFromComponent(intent, activityParams, callbackContext);
     }
 
-    public static CordovaPlugin getPlugin(CordovaPlugin plugin) {
+    addFlags(intent, activityParams, callbackContext);
 
-        if (plugin.webView != null) {
+    addExtraParams(args, activityParams, intent);
+    return intent;
+  }
 
-            instance = plugin.webView.getPluginManager().getPlugin(SERVICE_NAME);
-        } else {
-            instance = plugin;
+  protected Intent intentFromComponent(Intent intent, JSONObject activityParams, CallbackContext callbackContext) throws JSONException {
+
+    if(activityParams.has("component")) {
+      JSONObject component = activityParams.getJSONObject("component");
+
+      if(component.has("packageApp") && component.has("className")) {
+        if (!component.getString("className").startsWith(".")) {
+          component.put("className", component.getString("packageApp") + "." + component.getString("className"));
         }
+        intent.setComponent(new ComponentName(component.getString("packageApp"), component.getString("className")));
+      } else {
 
-        return instance;
+        JSONObject error = new JSONObject();
+        error.put("success", false);
+        error.put("message", "The 'component' key needs contains 'packageApp' and 'className' args");
+
+        callbackContext.error(error);
+        throw new RuntimeException(error.getString("message"));
+      }
+    }
+    return intent;
+  }
+
+  protected Intent intentFromUri(Intent intent, JSONObject activityParams, CallbackContext callbackContext) throws JSONException {
+
+    if(activityParams.has("uri")) {
+
+      String action = Intent.ACTION_VIEW;
+
+      if (activityParams.has("action")) {
+        try{
+          action = (String) getIntentValue(activityParams.optString("action"));
+        }catch (Exception intentErr) {
+          JSONObject error = errorResult(intentErr);
+          callbackContext.error(error);
+
+          intentErr.printStackTrace();
+        }
+      }
+
+      intent.setAction(action);
+      intent.addCategory(Intent.CATEGORY_DEFAULT);
+      intent.addCategory(Intent.CATEGORY_BROWSABLE);
+      intent.setData(Uri.parse(activityParams.getString("uri")));
     }
 
-    protected JSONObject mountParams(JSONArray args) throws JSONException {
+    return intent;
+  }
 
-        JSONObject activityParams;
+  protected Intent intentFromClass(Intent intent, JSONObject activityParams, CallbackContext callbackContext) throws JSONException {
 
-        if (args.opt(0) instanceof JSONObject) {
-            activityParams = new JSONObject(args.getJSONObject(0).toString());
-        }else {
-            activityParams = new JSONObject();
-            activityParams.put("packageName", args.optString(0));
-            activityParams.put("className", args.optString(1));
-        }
+    if (activityParams.has("className") && activityParams.has("packageName")) {
 
-        return activityParams;
+      try {
+
+        intent = new Intent(activityParams.optString("packageName") + "." + activityParams.getString("className"));
+        intent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
+
+      }catch (Exception clsErr) {
+        JSONObject error = errorResult(clsErr);
+
+        callbackContext.error(error);
+        clsErr.printStackTrace();
+      }
+    }else{
+      JSONObject error = new JSONObject();
+      error.put("message", "The params 'packageName' and 'className' is required");
+      error.put("sucess", false);
+
+      callbackContext.error(error);
     }
 
-    protected Intent configureIntent(JSONArray args, JSONObject activityParams, CallbackContext callbackContext) throws JSONException {
-        Intent intent = new Intent();
-        intent = intentFromUri(intent, activityParams, callbackContext);
+    return intent;
+  }
 
-        if (intent.getData() == null) {
+  protected void addFlags(Intent intent, JSONObject activityParams, final CallbackContext callbackContext) {
 
-            String targetPackage = activityParams.has("package") ? activityParams.optString("package") : activityParams.optString("packageApp");
 
-            if (!targetPackage.isEmpty()) {
+    JSONArray flags = activityParams.optJSONArray("flags");
 
-                intent.setPackage(targetPackage);
-            }
-
-            intent = intentFromClass(intent, activityParams, callbackContext);
-
-            intent = intentFromComponent(intent, activityParams, callbackContext);
-        }
-
-        addFlags(intent, activityParams, callbackContext);
-
-        addExtraParams(args, activityParams, intent);
-        return intent;
+    if (flags == null) {
+      flags = new JSONArray();
     }
 
-    protected Intent intentFromComponent(Intent intent, JSONObject activityParams, CallbackContext callbackContext) throws JSONException {
+    // Add default flags
+    flags.put(Intent.FLAG_ACTIVITY_CLEAR_TOP);
 
-        if(activityParams.has("component")) {
-            JSONObject component = activityParams.getJSONObject("component");
+    for(int i=0; i < flags.length(); i++) {
+      Integer flagValue;
+      try{
 
-            if(component.has("packageApp") && component.has("className")) {
-                if (!component.getString("className").startsWith(".")) {
-                    component.put("className", component.getString("packageApp") + "." + component.getString("className"));
-                }
-                intent.setComponent(new ComponentName(component.getString("packageApp"), component.getString("className")));
-            } else {
-
-                JSONObject error = new JSONObject();
-                error.put("success", false);
-                error.put("message", "The 'component' key needs contains 'packageApp' and 'className' args");
-
-                //TODO: Refactor this to use without "CallbackContext" cordova class
-                if (callbackContext != null) {
-                    callbackContext.error(error);
-                } else {
-                    throw new RuntimeException(error.optString("message"));
-                }
-            }
-        }
-        return intent;
-    }
-
-    protected Intent intentFromUri(Intent intent, JSONObject activityParams, CallbackContext callbackContext) throws JSONException {
-
-        if(activityParams.has("uri")) {
-
-            String action = Intent.ACTION_VIEW;
-
-            if (activityParams.has("action")) {
-                try{
-                    action = (String) getIntentValue(activityParams.optString("action"));
-                }catch (Exception intentErr) {
-                    JSONObject error = errorResult(intentErr);
-
-                    if (callbackContext != null) {
-
-                        callbackContext.error(error);
-                    } else {
-                        throw new RuntimeException(error.optString("message"));
-                    }
-
-                    intentErr.printStackTrace();
-                }
-            }
-
-            intent.setAction(action);
-            intent.addCategory(Intent.CATEGORY_DEFAULT);
-            intent.addCategory(Intent.CATEGORY_BROWSABLE);
-            intent.setData(Uri.parse(activityParams.getString("uri")));
-        }
-
-        return intent;
-    }
-
-    protected Intent intentFromClass(Intent intent, JSONObject activityParams, CallbackContext callbackContext) throws JSONException {
-
-        if (activityParams.has("className") && activityParams.has("packageName")) {
-
-            try {
-
-                intent = new Intent(activityParams.optString("packageName") + "." + activityParams.getString("className"));
-                intent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
-
-            }catch (Exception clsErr) {
-                JSONObject error = errorResult(clsErr);
-
-                callbackContext.error(error);
-                clsErr.printStackTrace();
-            }
+        if (flags.get(i) instanceof String) {
+          flagValue = (Integer) getIntentValue(flags.getString(i));
         }else{
-
-            JSONObject error = new JSONObject();
-            error.put("message", "The params 'packageName' and 'className' is required");
-            error.put("sucess", false);
-
-            //TODO: Refactor this to use without "CallbackContext" cordova class
-            if (callbackContext != null) {
-
-                callbackContext.error(error);
-            } else {
-                throw new RuntimeException(error.optString("message"));
-            }
+          flagValue = flags.getInt(i);
         }
 
-        return intent;
+        intent.addFlags(flagValue.intValue());
+      }catch (Exception intentErr) {
+        JSONObject error = errorResult(intentErr);
+        callbackContext.error(error);
+      }
     }
 
-    protected void addFlags(Intent intent, JSONObject activityParams, final CallbackContext callbackContext) {
+  }
 
+  protected void addExtraParams(JSONArray args, JSONObject activityParams, Intent intent) throws JSONException {
+    JSONObject jsonExtra;
+    if (activityParams.opt("className") instanceof JSONObject) {
+      jsonExtra = activityParams.getJSONObject("className");
+    } else {
 
-        JSONArray flags = activityParams.optJSONArray("flags");
+      if (args.length() == 2 && args.opt(0) instanceof JSONObject) {
+        jsonExtra = args.optJSONObject(1);
+      }else{
 
-        if (flags == null) {
-            flags = new JSONArray();
+        jsonExtra = args.length() >= 3 ? args.getJSONObject(2) : activityParams.optJSONObject("params");
+      }
+
+    }
+
+    if (jsonExtra != null) {
+
+      Iterator<?> keys = jsonExtra.keys();
+
+      while (keys.hasNext()) {
+        String key = (String) keys.next();
+        Object value = jsonExtra.get(key);
+
+        if(value instanceof Integer) {
+          intent.putExtra(key, jsonExtra.getInt(key));
         }
 
-        // Add default flags
-        flags.put(Intent.FLAG_ACTIVITY_CLEAR_TOP);
-
-        for(int i=0; i < flags.length(); i++) {
-            Integer flagValue;
-            try{
-
-                if (flags.get(i) instanceof String) {
-                    flagValue = (Integer) getIntentValue(flags.getString(i));
-                }else{
-                    flagValue = flags.getInt(i);
-                }
-
-                intent.addFlags(flagValue);
-            }catch (Exception intentErr) {
-                JSONObject error = errorResult(intentErr);
-
-                //TODO: Refactor this to use without "CallbackContext" cordova class
-                if (callbackContext != null) {
-                    callbackContext.error(error);
-                } else {
-                    throw new RuntimeException(error.optString("message"));
-                }
-            }
+        if(value instanceof String) {
+          intent.putExtra(key, jsonExtra.getString(key));
         }
 
-    }
-
-    protected void addExtraParams(JSONArray args, JSONObject activityParams, Intent intent) throws JSONException {
-        JSONObject jsonExtra;
-        if (activityParams.opt("className") instanceof JSONObject) {
-            jsonExtra = activityParams.getJSONObject("className");
-        } else {
-
-            if (args.length() == 2 && args.opt(0) instanceof JSONObject) {
-                jsonExtra = args.optJSONObject(1);
-            }else{
-
-                jsonExtra = args.length() >= 3 ? args.getJSONObject(2) : activityParams.optJSONObject("params");
-            }
-
+        if(value instanceof Boolean) {
+          intent.putExtra(key, jsonExtra.getBoolean(key));
         }
-
-        if (jsonExtra != null) {
-
-            Iterator<?> keys = jsonExtra.keys();
-
-            while (keys.hasNext()) {
-                String key = (String) keys.next();
-                Object value = jsonExtra.get(key);
-
-                if(value instanceof Integer) {
-                    intent.putExtra(key, jsonExtra.getInt(key));
-                }
-
-                if(value instanceof String) {
-                    intent.putExtra(key, jsonExtra.getString(key));
-                }
-
-                if(value instanceof Boolean) {
-                    intent.putExtra(key, jsonExtra.getBoolean(key));
-                }
-            }
-        }
+      }
     }
+  }
 
-    protected JSONObject errorResult(Exception e) {
-        HashMap<String, Object> data = new HashMap<String, Object>();
-        data.put("success", false);
-        data.put("name", e.getClass().getName());
-        data.put("message", e.getMessage() != null ? e.getMessage() : e.getCause().getMessage());
+  protected JSONObject errorResult(Exception e) {
+    HashMap<String, Object> data = new HashMap<String, Object>();
+    data.put("success", false);
+    data.put("name", e.getClass().getName());
+    data.put("message", e.getMessage() != null ? e.getMessage() : e.getCause().getMessage());
 
-        JSONObject error = new JSONObject(data);
-        return error;
-    }
+    JSONObject error = new JSONObject(data);
+    return error;
+  }
 
-    protected JSONObject errorResult(Exception e, HashMap<String, Object> extraData) {
-        HashMap<String, Object> data = new HashMap<String, Object>();
-        data.put("success", false);
-        data.put("name", e.getClass().getName());
-        data.put("message", e.getMessage() != null ? e.getMessage() : e.getCause().getMessage());
+  protected JSONObject errorResult(Exception e, HashMap<String, Object> extraData) {
+    HashMap<String, Object> data = new HashMap<String, Object>();
+    data.put("success", false);
+    data.put("name", e.getClass().getName());
+    data.put("message", e.getMessage() != null ? e.getMessage() : e.getCause().getMessage());
 
-        data.putAll(extraData);
+    data.putAll(extraData);
 
-        return new JSONObject(data);
-    }
+    JSONObject error = new JSONObject(data);
+    return error;
+  }
 
-    protected Object getIntentValue(String flag) throws NoSuchFieldException, IllegalAccessException {
-        Field field = Intent.class.getDeclaredField(flag);
-        field.setAccessible(true);
+  protected Object getIntentValue(String flag) throws NoSuchFieldException, IllegalAccessException {
+    Field field = Intent.class.getDeclaredField(flag);
+    field.setAccessible(true);
 
-        return field.get(null);
-    }
+    return field.get(null);
+  }
 }

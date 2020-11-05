@@ -21,10 +21,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/mfdeveloper/cordova-plugin-nativeview"
+    "url": "https://github.com/SerproLivre/cordova-plugin-nativeview"
   },
   "bugs": {
-    "url": "https://github.com/mfdeveloper/cordova-plugin-nativeview/issues"
+    "url": "https://github.com/SerproLivre/cordova-plugin-nativeview/issues"
   },
   "keywords": [
     "cordova",

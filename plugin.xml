@@ -10,8 +10,8 @@
     </description>
     <license>MIT</license>
     <keywords>cordova,activity,UIViewController,back</keywords>
-    <repo>https://github.com/mfdeveloper/cordova-plugin-nativeview.git</repo>
-    <issue>https://github.com/mfdeveloper/cordova-plugin-nativeview/issues</issue>
+    <repo>https://github.com/SerproLivre/cordova-plugin-nativeview.git.git</repo>
+    <issue>https://github.com/SerproLivre/cordova-plugin-nativeview/issues</issue>
 
     <dependency id="es6-promise-plugin" version="4.2.2"></dependency>
 
