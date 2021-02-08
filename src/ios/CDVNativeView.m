@@ -155,7 +155,11 @@
         }
         
         if (appId && [appId isKindOfClass:[NSString class]] && [appId length] > 0) {
-            NSString *url = [NSString stringWithFormat:@"itms://itunes.apple.com/app/%@", appId];
+            // Open with itunes
+            // NSString *url = [NSString stringWithFormat:@"itms://itunes.apple.com/app/%@", appId];
+            
+            // Open with apple store
+            NSString *url = [NSString stringWithFormat:@"itms://apple.com/app/%@", appId];
             
             [self openAPP:url withCommand: command];
             
