@@ -159,7 +159,7 @@
             // NSString *url = [NSString stringWithFormat:@"itms://itunes.apple.com/app/%@", appId];
             
             // Open with apple store
-            NSString *url = [NSString stringWithFormat:@"itms://apple.com/app/%@", appId];
+            NSString *url = [NSString stringWithFormat:@"itms-apps://apple.com/app/%@", appId];
             
             [self openAPP:url withCommand: command];
             
